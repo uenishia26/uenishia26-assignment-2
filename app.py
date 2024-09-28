@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 
 #Generating random Dataset
 def generate_random_dataset(n_samples=100, n_features=2, random_state=None):
