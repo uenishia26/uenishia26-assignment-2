@@ -12,7 +12,7 @@ install:
 
 # Command: make run
 run:
-	. $(VENV)/bin/activate && FLASK_APP=app.py flask run --host=0.0.0.0 --port=$(PORT)
+	. $(VENV)/bin/activate && FLASK_APP=web_server.py flask run --host=0.0.0.0 --port=$(PORT)
 
 # Clean up virtual environment
 clean:
