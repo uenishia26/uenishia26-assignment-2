@@ -1,0 +1,35 @@
+# .github/workflows/python-app.yml
+
+name: Python Flask App CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.x
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: make install
+
+    - name: Run application
+      run: |
+        make run &
+        sleep 10  # Wait for the server to start
+
+    - name: Test application is running
+      run: curl --retry 5 --retry-delay 5 --retry-connrefused http://localhost:3000
