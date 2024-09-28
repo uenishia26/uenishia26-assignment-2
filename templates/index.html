@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KMeans Clustering Algorithm</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            text-align: center;
+            margin: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+        }
+        #controls {
+            margin-bottom: 20px;
+        }
+        label {
+            font-weight: bold;
+        }
+        input, select, button {
+            margin: 10px;
+            padding: 10px;
+            font-size: 16px;
+        }
+        #plot-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #plot {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>KMeans Clustering Algorithm</h1>
+
+    <!-- Plotly graph container -->
+    <div id="plot-container">
+        <div id="plot"></div>
+    </div>
+
+    <!-- Loading indicator-->
+    <div id="loading" style="display: none;">
+        <p>Running KMeans... Please wait</p>
+    </div>
+
+    <!-- Controls for clustering -->
+    <div id="controls">
+        <!-- Input for number of clusters (k) -->
+        <label for="k">Number of Clusters (k):</label>
+        <input type="number" id="k" name="k" min="1" max="10">
+        <br>
+
+        <!-- Dropdown for initialization method -->
+        <label for="method">Initialization Method:</label>
+        <select id="method" name="method">
+            <option value="random">Random</option>
+            <option value="kmeans_plus_plus">KMeans++</option>
+            <option value="farthest_first">Farthest First</option>
+            <option value="manual">Manual</option>
+        </select>
+        <br>
+        <!-- Buttons for interaction -->
+        <button id="generate" type="button" onclick="generateDataset()">Generate New Dataset</button>
+        <button id="stepThrough" type="button" onclick="stepThroughKMeans()">Step Through KMeans</button>
+        <button id="reset" type="button" onclick="resetAlgorithm()">Reset Algorithm</button>
+        <button type="button" id="runToConvergenceBtn" onclick="runToConvergence()">Run to Convergence</button>
+    </div>
+
+    <script>
+// Declare the layout object globally at the top of the script
+const layout = {
+    title: 'KMeans Clustering Data',
+    xaxis: { title: 'X', range: [-30, 30] },  // Set axis range to match your dataset
+    yaxis: { title: 'Y', range: [-30, 30] },  // Set axis range to match your dataset
+    width: 600,  // Fixed width to ensure the plot doesn’t resize
+    height: 600,  // Fixed height
+    hovermode: 'closest',  // Only hover when directly over a point
+    hoverdistance: -1  // Disable hover snapping to nearest point when cursor is far from a point
+};
+
+
+let generatedDataset = [];  // Store generated data points
+let centroids = [];         // Store centroids during KMeans steps
+let clusters = [];          // Store clusters (groupings) of data points
+let currentStep = 0;        // Track the current step of KMeans
+let manualCentroids = [];   // Store manually selected centroids for "Manual" initialization
+let manualSelectionMode = false;  // Flag for manual selection mode
+
+
+// Helper function to determine the min and max range of the dataset (with padding)
+function getAxisRange(data, padding = 5) {
+    const xValues = data.map(point => point[0]);
+    const yValues = data.map(point => point[1]);
+    const xMin = Math.min(...xValues) - padding;
+    const xMax = Math.max(...xValues) + padding;
+    const yMin = Math.min(...yValues) - padding;
+    const yMax = Math.max(...yValues) + padding;
+    
+    return { xMin, xMax, yMin, yMax };
+}  
+// Function to generate a new random dataset
+function generateDataset() {
+    $.ajax({
+        url: '/generate',
+        type: 'POST',
+        success: function(data) {
+            generatedDataset = data;  // Save the generated data
+            plotDataset(generatedDataset);  // Plot the new dataset
+            console.log('Generated dataset:', data);
+        },
+        error: function() {
+            alert('Error generating dataset!');
+        }
+    });
+}
+function stepThroughKMeans() {
+    const k = $('#k').val();
+    const method = $('#method').val();
+
+    // Validate user input
+    if (!k || isNaN(k) || k <= 0) {
+        alert('Please enter a valid number of clusters (k).');
+        return;
+    }
+
+    if (!generatedDataset.length) {
+        alert('Please generate a dataset first!');
+        return;
+    }
+
+    // If it's the first step and method is manual, use manual centroids
+    if (method === 'manual' && currentStep === 0) {
+        centroids = manualCentroids;  // Use manual centroids
+        plotCentroids(centroids);     // Plot the manual centroids
+        currentStep++;                // Move to the next step
+        return;                       // Skip calling backend since we already have centroids
+    }
+
+    // For non-manual methods, initialize centroids on the first step
+    if (currentStep === 0 && method !== 'manual') {
+        $.ajax({
+            url: '/initialize',
+            type: 'POST',
+            data: {
+                k: k,
+                method: method,
+                X: JSON.stringify(generatedDataset)
+            },
+            success: function(initialCentroids) {
+                centroids = initialCentroids;  // Save initialized centroids
+                plotCentroids(centroids);      // Plot initial centroids
+                currentStep++;                 // Move to the next step
+            },
+            error: function() {
+                alert('Error initializing centroids!');
+            }
+        });
+    } else {
+        // Step through the KMeans algorithm (this part is shared for manual and non-manual)
+        $.ajax({
+            url: '/step',  // Backend endpoint to step through the algorithm
+            type: 'POST',
+            data: {
+                centroids: JSON.stringify(centroids),  // Pass the current centroids
+                X: JSON.stringify(generatedDataset)
+            },
+            success: function(result) {
+                centroids = result.new_centroids;  // Update centroids
+                clusters = result.clusters;        // Update clusters
+                plotKMeans(generatedDataset, clusters, centroids);  // Plot clusters and centroids
+
+                // Check if the algorithm has converged
+                if (result.converged) {
+                    alert("KMeans has converged!");
+                } else {
+                    currentStep++;  // Increment the step for subsequent steps
+                }
+            },
+            error: function() {
+                alert('Error stepping through KMeans!');
+            }
+        });
+    }
+}
+
+
+function initializeManualCentroids() {
+    manualCentroids = [];  // Reset previously selected centroids
+    manualSelectionMode = true;
+    disableButtons();  // Disable buttons until centroids are selected
+
+    // Plot the dataset initially
+    Plotly.newPlot('plot', [{
+        x: generatedDataset.map(point => point[0]),
+        y: generatedDataset.map(point => point[1]),
+        mode: 'markers',
+        type: 'scatter',
+        marker: { color: 'blue' },
+        name: 'Data Points'
+    }], layout);
+
+    // Use raw click event listener
+    document.getElementById('plot').addEventListener('click', function(event) {
+        const k = parseInt($('#k').val());  // Get the number of clusters (k)
+
+        if (manualCentroids.length < k) {
+            // Get the Plotly graph's internal layout to calculate exact positioning
+            const plotElement = document.getElementById('plot');
+            const plotData = plotElement._fullLayout;
+            
+            // Get the exact click position in terms of pixels relative to the entire plot
+            const boundingRect = plotElement.getBoundingClientRect();
+            const xPos = event.clientX - boundingRect.left;
+            const yPos = event.clientY - boundingRect.top;
+
+            // Get the axis range and scaling from Plotly's internal axis settings
+            const xRange = plotData.xaxis.range;
+            const yRange = plotData.yaxis.range;
+
+            // Use the plot's margin and axis scaling to accurately calculate the click's data position
+            const xData = xRange[0] + ((xPos - plotData.margin.l) / (boundingRect.width - plotData.margin.l - plotData.margin.r)) * (xRange[1] - xRange[0]);
+            const yData = yRange[0] + ((boundingRect.height - yPos - plotData.margin.b) / (boundingRect.height - plotData.margin.b - plotData.margin.t)) * (yRange[1] - yRange[0]);
+
+            // Debugging: Check captured coordinates
+            console.log('Clicked Data Coordinates:', xData, yData);
+
+            // Add the clicked point as a centroid
+            manualCentroids.push([xData, yData]);
+
+            // Dynamically update the plot with the new centroid
+            updatePlotWithCentroids();
+
+            // Check if all centroids have been selected
+            if (manualCentroids.length === k) {
+                manualSelectionMode = false;
+                enableButtons();  // Re-enable buttons once all centroids are selected
+            }
+        }
+    });
+}
+
+
+
+
+function updatePlotWithCentroids() {
+    // Get the axis range for the dataset and centroids
+    const allData = generatedDataset.concat(manualCentroids);
+    const { xMin, xMax, yMin, yMax } = getAxisRange(allData);
+
+    // Keep the axis ranges fixed
+    const layoutWithFixedRange = {
+        ...layout,
+        xaxis: { title: 'X', range: [xMin, xMax] },  // Fix x-axis range
+        yaxis: { title: 'Y', range: [yMin, yMax] }   // Fix y-axis range
+    };
+
+    let traces = [];
+
+    // Plot the dataset
+    traces.push({
+        x: generatedDataset.map(point => point[0]),
+        y: generatedDataset.map(point => point[1]),
+        mode: 'markers',
+        type: 'scatter',
+        marker: { color: 'blue' },
+        name: 'Data Points'
+    });
+
+    // Plot the centroids
+    traces.push({
+        x: manualCentroids.map(point => point[0]),
+        y: manualCentroids.map(point => point[1]),
+        mode: 'markers',
+        type: 'scatter',
+        name: 'Centroids',
+        marker: { color: 'black', size: 12, symbol: 'x' }
+    });
+
+    // Dynamically update the plot with fixed axis ranges
+    Plotly.react('plot', traces, layoutWithFixedRange);
+}
+
+function runToConvergence() {
+    const k = $('#k').val();  // Get the number of clusters from input
+    const method = $('#method').val();  // Get the selected initialization method
+    
+    // Validate user input
+    if (!k || isNaN(k) || k <= 0) {
+        alert('Please enter a valid number of clusters (k).');
+        return;
+    }
+
+    if (!generatedDataset.length) {
+        alert('Please generate a dataset first!');
+        return;
+    }
+
+    // If the method is manual, use manualCentroids as the initial centroids
+    if (method === 'manual' && manualCentroids.length === parseInt(k)) {
+        centroids = manualCentroids;
+    }
+
+    // Send the request to the backend to run the KMeans algorithm until convergence
+    $.ajax({
+        url: '/runToConvergence',  // Backend endpoint
+        type: 'POST',
+        data: {
+            k: k,
+            method: method,
+            X: JSON.stringify(generatedDataset),  // Pass the dataset to the backend
+            centroids: JSON.stringify(centroids)  // Pass the manually selected centroids or initial centroids
+        },
+        success: function(result) {
+            centroids = result.new_centroids;  // Update centroids with the final values
+            clusters = result.clusters;        // Update clusters
+
+            // Plot clusters and centroids immediately
+            plotKMeans(generatedDataset, clusters, centroids);  
+        },
+        error: function() {
+            alert('Error running KMeans to convergence!');
+        }
+    });
+}
+
+ 
+
+
+// Disable buttons for step-through and convergence
+function disableButtons() {
+        $('#runToConvergenceBtn').prop('disabled', true);
+        $('#stepThrough').prop('disabled', true);
+    }
+
+    // Re-enable buttons for step-through and convergence
+function enableButtons() {
+    $('#runToConvergenceBtn').prop('disabled', false);
+    $('#stepThrough').prop('disabled', false);
+}
+
+
+
+// Function to plot both the dataset and clusters (update existing plot)
+function plotKMeans(data, clusters, centroids) {
+    let traces = [];
+
+    // Add the clusters as traces
+    clusters.forEach((cluster, index) => {
+        traces.push({
+            x: cluster.map(point => point[0]),
+            y: cluster.map(point => point[1]),
+            mode: 'markers',
+            type: 'scatter',
+            name: 'Cluster ' + (index + 1),
+            marker: { size: 8, color: getClusterColor(index) }  // Color the clusters
+        });
+    });
+
+    // Add the centroids as a trace
+    traces.push({
+        x: centroids.map(point => point[0]),
+        y: centroids.map(point => point[1]),
+        mode: 'markers',
+        type: 'scatter',
+        name: 'Centroids',
+        marker: { color: 'black', size: 12, symbol: 'x' }
+    });
+
+    // Plot everything (replace existing plot)
+    // Plot everything (replace existing plot)
+    Plotly.react('plot', traces, {
+        ...layout,
+        hovermode: 'closest',  // Only trigger hover when directly over a point
+        hoverdistance: 5  // Small hover distance to avoid snapping
+    });
+}
+
+function plotDataset(data) {
+    // Get the range for both axes (with padding)
+    const { xMin, xMax, yMin, yMax } = getAxisRange(data);
+
+    // Fix the axis ranges based on the data
+    const layoutWithFixedRange = {
+        ...layout,
+        xaxis: { title: 'X', range: [xMin, xMax] },  // Set axis range based on data
+        yaxis: { title: 'Y', range: [yMin, yMax] },  // Set axis range based on data
+        hovermode: 'closest',  // Show hover info only when directly over a point
+        hoverdistance: 5  // Small hover distance (or you can leave it at the default)
+    };
+
+    const trace = {
+        x: data.map(point => point[0]),
+        y: data.map(point => point[1]),
+        mode: 'markers',
+        type: 'scatter',
+        marker: { color: 'blue' },  // Blue for data points
+        name: 'Data Points'
+    };
+
+    Plotly.newPlot('plot', [trace], layoutWithFixedRange);
+}
+
+
+
+// Function to plot only the centroids (used initially after initialization)
+// Function to plot both the dataset and centroids when centroids are first initialized
+function plotCentroids(centroids) {
+    // Plot both the dataset and centroids at once
+    let traces = [];
+
+    // Add dataset trace
+    traces.push({
+        x: generatedDataset.map(point => point[0]),
+        y: generatedDataset.map(point => point[1]),
+        mode: 'markers',
+        type: 'scatter',
+        marker: { color: 'blue' },
+        name: 'Data Points'
+    });
+
+    // Add centroids trace
+    traces.push({
+        x: centroids.map(point => point[0]),
+        y: centroids.map(point => point[1]),
+        mode: 'markers',
+        type: 'scatter',
+        name: 'Centroids',
+        marker: { color: 'black', size: 12, symbol: 'x' }
+    });
+
+    // Plot dataset and centroids together
+    Plotly.newPlot('plot', traces,layout);
+}
+
+
+// Reset everything
+function resetAlgorithm() {
+    // Reset all relevant variables
+    location.reload();  // This will reload the page entirely
+}
+
+// Function to generate colors for clusters
+function getClusterColor(index) {
+    const colors = ['red', 'blue', 'green', 'purple', 'orange', 'yellow', 'pink', 'brown', 'cyan', 'magenta'];
+    return colors[index % colors.length];  // Cycle through colors for each cluster
+}
+
+// Detect when the "Manual" method is selected and start manual centroid selection
+$('#method').on('change', function() {
+    const selectedMethod = $(this).val();
+    if (selectedMethod === 'manual') {
+        alert('Manual mode selected: Click on the plot to choose centroids.');
+        disableButtons();
+        initializeManualCentroids();
+    } else {
+        enableButtons();  // Re-enable buttons for other methods
+        manualCentroids = []; // Reset manual centroids when switching methods
+    }
+});
+    </script>
+
+</body>
+</html>
